@@ -50,7 +50,7 @@ public class DataCapture
         using var connection = factory.CreateConnection();
         using var channel = connection.CreateModel();
         _channel = channel;
-        channel.QueueDeclare(queue: "FileQueue",
+        channel.QueueDeclare(queue: "TestQueue",
                              durable: false,
                              exclusive: false,
                              autoDelete: false,
@@ -64,6 +64,7 @@ public class DataCapture
 
     public static void OnChanged(object sender, FileSystemEventArgs e)
     {
+        Console.WriteLine("OnChanged");
         SendMessage("OnChanged");
     }
     public static void OnCreated(object sender, FileSystemEventArgs e)
