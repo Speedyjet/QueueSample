@@ -1,6 +1,8 @@
 ﻿using RabbitMQ.Client.Events;
 using RabbitMQ.Client;
 using System.Text;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Builder;
 
 class ProcessingService
 {
@@ -8,8 +10,14 @@ class ProcessingService
     private static IConnection? _currentConnection;
     private static IModel? _channel;
 
-    public static async Task Main()
+    public static async Task Main(string[] args)
     {
+        var builder = WebApplication.CreateBuilder(args);
+        var app = builder.Build();
+
+        app.MapGet("/", () => "Hello World!");
+
+        app.Run();
         await ConfigureMainProcessingService();
         CreateNewQueue();
         GetMessages();
