@@ -2,24 +2,59 @@
 //and retrieve documents of some specific format (i.e., PDF) and send to Main processing service through message queue. 
 
 using System.Text;
+using System.Text.Json;
 using System.Threading.Channels;
 using RabbitMQ.Client;
+using RabbitMQ.Client.Events;
 
 public class DataCapture
 {
     private static IModel? _channel;
+    private static ServiceConfiguration _serviceConfiguration;
 
     public static void Main()
     {
-        while (true)
-        {
-            CreateWatcher();
-        }
+        GetInitailConfiguration("ConfigurationQueue");
+        Console.ReadKey();
+    }
+
+    private static void GetInitailConfiguration(string configurationChannelName)
+    {
+        var configuration = new ServiceConfiguration();
+        var factory = new ConnectionFactory { HostName = "localhost" };
+        var connection = factory.CreateConnection();
+        var channel = connection.CreateModel();
+
+        channel.ExchangeDeclare(exchange: configurationChannelName, type: ExchangeType.Fanout);
+
+        var queueName = channel.QueueDeclare().QueueName;
+        channel.QueueBind(queue: queueName,
+                          exchange: configurationChannelName,
+                          routingKey: string.Empty);
+
+        Console.WriteLine(" [*] Waiting for configuration.");
+
+        var consumer = new EventingBasicConsumer(channel);
+        consumer.Received += OnConfigurationRecieved;
+
+        channel.BasicConsume(queue: queueName,
+                             autoAck: true,
+                             consumer: consumer);
+    }
+
+    public static void OnConfigurationRecieved(object sender, BasicDeliverEventArgs e)
+    {
+        byte[] body = e.Body.ToArray();
+        var message = Encoding.UTF8.GetString(body);
+        Console.WriteLine("New configuration acquired");
+        _serviceConfiguration = JsonSerializer.Deserialize<ServiceConfiguration>(message);
+        CreateWatcher();
     }
 
     public static void CreateWatcher()
     {
-        using (FileSystemWatcher watcher = new FileSystemWatcher(@"c:\TempDirectory"))
+        Console.WriteLine("Creating watcher");
+        using (FileSystemWatcher watcher = new FileSystemWatcher(_serviceConfiguration.LocalDirectory))
         {
             watcher.NotifyFilter = NotifyFilters.Attributes
                                          | NotifyFilters.CreationTime
@@ -30,14 +65,13 @@ public class DataCapture
                                          | NotifyFilters.Security
                                          | NotifyFilters.Size;
             watcher.Changed += OnChanged;
-            watcher.Created += OnCreated;
-            watcher.Deleted += OnDeleted;
-            watcher.Renamed += OnRenamed;
-            watcher.Error += OnError;
+            watcher.Created += OnChanged;
+            watcher.Renamed += OnChanged;
 
             watcher.Filter = "*.pdf";
             watcher.IncludeSubdirectories = true;
             watcher.EnableRaisingEvents = true;
+            Console.WriteLine("Watcher created");
 
             Console.WriteLine("Press enter to exit.");
             Console.ReadLine();
@@ -46,6 +80,7 @@ public class DataCapture
 
     public static void SendMessage(string message)
     {
+        Console.WriteLine(message);
         var factory = new ConnectionFactory { HostName = "localhost" };
         using var connection = factory.CreateConnection();
         using var channel = connection.CreateModel();
@@ -57,35 +92,14 @@ public class DataCapture
                              arguments: null);
         var body = Encoding.UTF8.GetBytes(message);
         channel.BasicPublish(exchange: string.Empty,
-                     routingKey: "hello",
+                     routingKey: "TestQueue",
                      basicProperties: null,
                      body: body);
     }
 
     public static void OnChanged(object sender, FileSystemEventArgs e)
     {
-        Console.WriteLine("OnChanged");
         SendMessage("OnChanged");
     }
-    public static void OnCreated(object sender, FileSystemEventArgs e)
-    {
-        const string message = "Hello World!";
-        var body = Encoding.UTF8.GetBytes(message);
-        _channel?.BasicPublish(exchange: string.Empty,
-                     routingKey: "hello",
-                     basicProperties: null,
-                     body: body);
-    }
-    public static void OnDeleted(object sender, FileSystemEventArgs e)
-    {
-        Console.WriteLine("OnDeleted");
-    }
-    public static void OnRenamed(object sender, FileSystemEventArgs e)
-    {
-        Console.WriteLine("OnRenamed");
-    }
-    public static void OnError(object sender, ErrorEventArgs e)
-    {
-        Console.WriteLine("OnError");
-    }
+    
 }
