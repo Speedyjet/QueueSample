@@ -6,6 +6,10 @@ using System.Text.Json;
 
 class ProcessingService
 {
+
+    private static IModel _connection;
+    private static SystemConfigurationModel _currentConfiguration;
+
     public static void Main(string[] args)
     {
         
@@ -14,53 +18,81 @@ class ProcessingService
         .AddEnvironmentVariables()
         .Build();
         Console.WriteLine("Getting configuration");
-        var currentConfiguration = config.GetRequiredSection("Settings").Get<SystemConfigurationModel>();
+        _currentConfiguration = config.GetRequiredSection("Settings").Get<SystemConfigurationModel>();
         Console.WriteLine("Creating configuration queue");
-        CreateConfigurationQueue(currentConfiguration);
+        Task.Run(() => CreateConfigurationQueue());
         Console.WriteLine("Creating queue");
-        var queue = CreateQueue(currentConfiguration.QueueName);
+        CreateQueue();
         Console.WriteLine("Subscribing to the queue");
-        GetMessages(queue, currentConfiguration.QueueName);
+        SubscribeToRecieveMessages();
+        Console.WriteLine("Creating heartbeat queue");
+        Task.Run(() => CreateHeartBeatQueue());
+        Console.WriteLine("Press any key to exit");
         Console.ReadKey();
     }
 
-    private static void CreateConfigurationQueue(SystemConfigurationModel? currentConfiguration)
+    private static void CreateHeartBeatQueue()
     {
-        var factory = new ConnectionFactory { HostName = currentConfiguration.HostName };
-        var connection = factory.CreateConnection();
-        var channel = connection.CreateModel();
-        var configurationBody = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(currentConfiguration));
-        channel.ExchangeDeclare(exchange: currentConfiguration.ConfigurationQueueName,
+        var channel = GetConnection();
+        channel.QueueDeclare(queue: _currentConfiguration.HeartBeatQueueName,
+                     durable: false,
+                     exclusive: true,
+                     autoDelete: true,
+                     arguments: null);
+        var consumer = new EventingBasicConsumer(GetConnection());
+        consumer.Received += OnHeartbeatMessageRecieved;
+        GetConnection().BasicConsume(queue: _currentConfiguration.HeartBeatQueueName,
+                             autoAck: true,
+                             consumer: consumer);
+    }
+
+    private static void OnHeartbeatMessageRecieved(object? sender, BasicDeliverEventArgs e)
+    {
+        var body = e.Body.ToArray();
+        var message = Encoding.UTF8.GetString(body);
+        Console.WriteLine(message);
+    }
+
+    private static IModel GetConnection()
+    {
+        if (_connection == null)
+        {
+            var factory = new ConnectionFactory { HostName = _currentConfiguration.HostName };
+            var connection = factory.CreateConnection();
+            return connection.CreateModel();
+        }
+        return _connection;
+    }
+
+    private static void CreateConfigurationQueue()
+    {
+        var channel = GetConnection();
+        var configurationBody = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(_currentConfiguration));
+        channel.ExchangeDeclare(exchange: _currentConfiguration.ConfigurationQueueName,
                      type: ExchangeType.Fanout);
-        channel.BasicPublish(exchange: currentConfiguration.ConfigurationQueueName,
+        channel.BasicPublish(exchange: _currentConfiguration.ConfigurationQueueName,
             routingKey: string.Empty,
             basicProperties: null,
             body: configurationBody);
     }
 
-    private static IModel CreateQueue(string queueName)
+    private static void CreateQueue()
     {
-        var factory = new ConnectionFactory { HostName = "localhost" };
-        var connection = factory.CreateConnection();
-        var channel = connection.CreateModel();
-        channel.QueueDeclare(queue: queueName,
+        var channel = GetConnection();
+        channel.QueueDeclare(queue: _currentConfiguration.QueueName,
                              durable: false,
                              exclusive: false,
                              autoDelete: false,
                              arguments: null);
-        return channel;
     }
 
-    private static void GetMessages(IModel channelModel, string queueName)
+    private static void SubscribeToRecieveMessages()
     {
-        var consumer = new EventingBasicConsumer(channelModel);
+        var consumer = new EventingBasicConsumer(GetConnection());
         consumer.Received += OnMessageRecieved;
-        channelModel.BasicConsume(queue: queueName,
+        GetConnection().BasicConsume(queue: _currentConfiguration.QueueName,
                              autoAck: true,
                              consumer: consumer);
-
-        Console.WriteLine(" Press [enter] to exit.");
-        Console.ReadLine();
     }
 
     private static void OnMessageRecieved(object? sender, BasicDeliverEventArgs e)
@@ -70,11 +102,6 @@ class ProcessingService
         var tempDirectory = Path.GetTempPath();
         var tempFileName = Path.GetRandomFileName();
         File.WriteAllBytes(Path.Combine(tempDirectory, tempFileName), fileBytes.ToArray());
-    }
-
-    public static void Received(object sender, FileSystemEventArgs e)
-    {
-        Console.WriteLine("OnDeleted");
     }
 }
 

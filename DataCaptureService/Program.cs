@@ -1,20 +1,17 @@
-﻿//Implement Data capture service which will listen to a specific local folder
-//and retrieve documents of some specific format (i.e., PDF) and send to Main processing service through message queue. 
-
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
-using System.Threading.Channels;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 
 public class DataCapture
 {
-    private static IModel? _channel;
     private static ServiceConfiguration _serviceConfiguration;
+    private static bool isWorking;
 
     public static void Main()
     {
-        GetInitailConfiguration("ConfigurationQueue");
+        Task.Run(() => GetInitailConfiguration("ConfigurationQueue"));
+        Console.WriteLine("Press any key to exit");
         Console.ReadKey();
     }
 
@@ -49,6 +46,39 @@ public class DataCapture
         Console.WriteLine("New configuration acquired");
         _serviceConfiguration = JsonSerializer.Deserialize<ServiceConfiguration>(message);
         CreateWatcher();
+        Task.Run(() =>
+        {
+            StartHeartBeatService();
+        });
+    }
+
+    private static void StartHeartBeatService()
+    {
+        Console.WriteLine("Starting heartbeat service");
+        while (true)
+        {
+            Task.Delay(6000).GetAwaiter().GetResult();
+            SendHeartbeat();
+        }
+    }
+
+    private static void SendHeartbeat()
+    {
+        Console.WriteLine("Sending heartbeat");
+        var factory = new ConnectionFactory { HostName = _serviceConfiguration.HostName };
+        using var connection = factory.CreateConnection();
+        using var channel = connection.CreateModel();
+        channel.QueueDeclare(queue: _serviceConfiguration.HeartBeatQueueName,
+                             durable: false,
+                             exclusive: false,
+                             autoDelete: false,
+                             arguments: null);
+        var message = isWorking ? "Working" : "Idle";
+        var body = Encoding.UTF8.GetBytes(message);
+        channel.BasicPublish(exchange: string.Empty,
+                     routingKey: _serviceConfiguration.HeartBeatQueueName,
+                     basicProperties: null,
+                     body: body);
     }
 
     public static void CreateWatcher()
@@ -72,9 +102,6 @@ public class DataCapture
             watcher.IncludeSubdirectories = true;
             watcher.EnableRaisingEvents = true;
             Console.WriteLine("Watcher created");
-
-            Console.WriteLine("Press enter to exit.");
-            Console.ReadLine();
         } 
     }
 
@@ -84,13 +111,13 @@ public class DataCapture
         var factory = new ConnectionFactory { HostName = "localhost" };
         using var connection = factory.CreateConnection();
         using var channel = connection.CreateModel();
-        channel.QueueDeclare(queue: "TestQueue",
+        channel.QueueDeclare(queue: _serviceConfiguration.QueueName,
                              durable: false,
                              exclusive: false,
                              autoDelete: false,
                              arguments: null);
         channel.BasicPublish(exchange: string.Empty,
-                     routingKey: "TestQueue",
+                     routingKey: _serviceConfiguration.QueueName,
                      basicProperties: null,
                      body: bytes);
         Console.WriteLine("File sent");
@@ -98,6 +125,7 @@ public class DataCapture
 
     public static void OnChanged(object sender, FileSystemEventArgs e)
     {
+        isWorking = true;
         SendFile(File.ReadAllBytes(e.FullPath));
     }
     

@@ -7,4 +7,5 @@ public class SystemConfigurationModel
     public IModel CurrentChannel { get; set; }
     public string ConfigurationQueueName {get;set; }
     public string HostName { get; set; }
+    public string? HeartBeatQueueName { get; set; }
 }
