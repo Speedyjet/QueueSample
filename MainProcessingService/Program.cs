@@ -55,12 +55,6 @@ class ProcessingService
     {
         var consumer = new EventingBasicConsumer(channelModel);
         consumer.Received += OnMessageRecieved;
-        //    (model, ea) =>
-        //{
-        //    var body = ea.Body.ToArray();
-        //    var message = Encoding.UTF8.GetString(body);
-        //    Console.WriteLine($" [x] Received {message}");
-        //};
         channelModel.BasicConsume(queue: queueName,
                              autoAck: true,
                              consumer: consumer);
@@ -71,9 +65,11 @@ class ProcessingService
 
     private static void OnMessageRecieved(object? sender, BasicDeliverEventArgs e)
     {
-        var body = e.Body.ToArray();
-        var message = Encoding.UTF8.GetString(body);
-        Console.WriteLine($" [x] Received {message}");
+        var fileBytes = e.Body;
+        Console.WriteLine($" File received");
+        var tempDirectory = Path.GetTempPath();
+        var tempFileName = Path.GetRandomFileName();
+        File.WriteAllBytes(Path.Combine(tempDirectory, tempFileName), fileBytes.ToArray());
     }
 
     public static void Received(object sender, FileSystemEventArgs e)

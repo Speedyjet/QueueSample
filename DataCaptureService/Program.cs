@@ -78,28 +78,27 @@ public class DataCapture
         } 
     }
 
-    public static void SendMessage(string message)
+    public static void SendFile(byte[] bytes)
     {
-        Console.WriteLine(message);
+        Console.WriteLine("File acquired");
         var factory = new ConnectionFactory { HostName = "localhost" };
         using var connection = factory.CreateConnection();
         using var channel = connection.CreateModel();
-        _channel = channel;
         channel.QueueDeclare(queue: "TestQueue",
                              durable: false,
                              exclusive: false,
                              autoDelete: false,
                              arguments: null);
-        var body = Encoding.UTF8.GetBytes(message);
         channel.BasicPublish(exchange: string.Empty,
                      routingKey: "TestQueue",
                      basicProperties: null,
-                     body: body);
+                     body: bytes);
+        Console.WriteLine("File sent");
     }
 
     public static void OnChanged(object sender, FileSystemEventArgs e)
     {
-        SendMessage("OnChanged");
+        SendFile(File.ReadAllBytes(e.FullPath));
     }
     
 }
