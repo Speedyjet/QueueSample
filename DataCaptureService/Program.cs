@@ -1,132 +1,89 @@
-﻿using System.Text;
-using System.Text.Json;
-using RabbitMQ.Client;
-using RabbitMQ.Client.Events;
+﻿using RabbitMQ.Client;
 
 public class DataCapture
 {
-    private static ServiceConfiguration _serviceConfiguration;
-    private static bool isWorking;
+    private static FileSystemWatcher _watcher;
 
     public static void Main()
     {
-        Task.Run(() => GetInitailConfiguration("ConfigurationQueue"));
-        Console.WriteLine("Press any key to exit");
-        Console.ReadKey();
-    }
-
-    private static void GetInitailConfiguration(string configurationChannelName)
-    {
-        var configuration = new ServiceConfiguration();
-        var factory = new ConnectionFactory { HostName = "localhost" };
-        var connection = factory.CreateConnection();
-        var channel = connection.CreateModel();
-
-        channel.ExchangeDeclare(exchange: configurationChannelName, type: ExchangeType.Fanout);
-
-        var queueName = channel.QueueDeclare().QueueName;
-        channel.QueueBind(queue: queueName,
-                          exchange: configurationChannelName,
-                          routingKey: string.Empty);
-
-        Console.WriteLine(" [*] Waiting for configuration.");
-
-        var consumer = new EventingBasicConsumer(channel);
-        consumer.Received += OnConfigurationRecieved;
-
-        channel.BasicConsume(queue: queueName,
-                             autoAck: true,
-                             consumer: consumer);
-    }
-
-    public static void OnConfigurationRecieved(object sender, BasicDeliverEventArgs e)
-    {
-        byte[] body = e.Body.ToArray();
-        var message = Encoding.UTF8.GetString(body);
-        Console.WriteLine("New configuration acquired");
-        _serviceConfiguration = JsonSerializer.Deserialize<ServiceConfiguration>(message);
-        CreateWatcher();
-        Task.Run(() =>
+        try
         {
-            StartHeartBeatService();
-        });
-    }
-
-    private static void StartHeartBeatService()
-    {
-        Console.WriteLine("Starting heartbeat service");
-        while (true)
+            StartServiceQueue();
+            CreateWatcher();
+            Console.WriteLine("Press any key to exit");
+            Console.ReadKey();
+        }
+        finally
         {
-            Task.Delay(6000).GetAwaiter().GetResult();
-            SendHeartbeat();
+            if (_watcher != null )
+            {
+                Console.WriteLine("Disposing file watcher");
+                _watcher.Dispose();
+            }
         }
     }
 
-    private static void SendHeartbeat()
+    private static void StartServiceQueue()
     {
-        Console.WriteLine("Sending heartbeat");
-        var factory = new ConnectionFactory { HostName = _serviceConfiguration.HostName };
+        Console.WriteLine("Starting service queue");
+        var factory = new ConnectionFactory { HostName = "localhost"};
         using var connection = factory.CreateConnection();
         using var channel = connection.CreateModel();
-        channel.QueueDeclare(queue: _serviceConfiguration.HeartBeatQueueName,
+        channel.QueueDeclare(queue: "FileQueue",
                              durable: false,
                              exclusive: false,
                              autoDelete: false,
                              arguments: null);
-        var message = isWorking ? "Working" : "Idle";
-        var body = Encoding.UTF8.GetBytes(message);
-        channel.BasicPublish(exchange: string.Empty,
-                     routingKey: _serviceConfiguration.HeartBeatQueueName,
-                     basicProperties: null,
-                     body: body);
+        Console.WriteLine("Service queue started");
     }
 
     public static void CreateWatcher()
     {
         Console.WriteLine("Creating watcher");
-        using (FileSystemWatcher watcher = new FileSystemWatcher(_serviceConfiguration.LocalDirectory))
-        {
-            watcher.NotifyFilter = NotifyFilters.Attributes
-                                         | NotifyFilters.CreationTime
-                                         | NotifyFilters.DirectoryName
-                                         | NotifyFilters.FileName
-                                         | NotifyFilters.LastAccess
-                                         | NotifyFilters.LastWrite
-                                         | NotifyFilters.Security
-                                         | NotifyFilters.Size;
-            watcher.Changed += OnChanged;
-            watcher.Created += OnChanged;
-            watcher.Renamed += OnChanged;
+        _watcher = new FileSystemWatcher(@"C:\TempDirectory", "*.pdf");
+        _watcher.NotifyFilter = NotifyFilters.Attributes
+                                        | NotifyFilters.CreationTime
+                                        | NotifyFilters.DirectoryName
+                                        | NotifyFilters.FileName
+                                        | NotifyFilters.LastAccess
+                                        | NotifyFilters.LastWrite
+                                        | NotifyFilters.Security
+                                        | NotifyFilters.Size;
+        _watcher.Created += OnChanged;
 
-            watcher.Filter = "*.pdf";
-            watcher.IncludeSubdirectories = true;
-            watcher.EnableRaisingEvents = true;
-            Console.WriteLine("Watcher created");
-        } 
+        _watcher.EnableRaisingEvents = true;
+        Console.WriteLine("Watcher created");
     }
-
-    public static void SendFile(byte[] bytes)
+    
+    public static void SendFile(byte[] bytes, string fileName)
     {
         Console.WriteLine("File acquired");
         var factory = new ConnectionFactory { HostName = "localhost" };
         using var connection = factory.CreateConnection();
         using var channel = connection.CreateModel();
-        channel.QueueDeclare(queue: _serviceConfiguration.QueueName,
+        var props = channel.CreateBasicProperties();
+        var dict = new Dictionary<string, object>
+        {
+            { "fileName", fileName }
+        };
+        props.Headers = dict;
+
+        channel.QueueDeclare(queue: "FileQueue",
                              durable: false,
                              exclusive: false,
                              autoDelete: false,
                              arguments: null);
         channel.BasicPublish(exchange: string.Empty,
-                     routingKey: _serviceConfiguration.QueueName,
-                     basicProperties: null,
+                     routingKey: "FileQueue",
+                     basicProperties: props,
                      body: bytes);
         Console.WriteLine("File sent");
     }
 
     public static void OnChanged(object sender, FileSystemEventArgs e)
     {
-        isWorking = true;
-        SendFile(File.ReadAllBytes(e.FullPath));
+        Console.WriteLine("New file aquired");
+        SendFile(File.ReadAllBytes(e.FullPath), e.Name);
     }
     
 }

@@ -2,10 +2,10 @@
 
 public class SystemConfigurationModel
 {
-    public string LocalDirectory { get; set; }
-    public string QueueName { get; set; } = "TestQueue";
-    public IModel CurrentChannel { get; set; }
-    public string ConfigurationQueueName {get;set; }
-    public string HostName { get; set; }
+    public string? LocalDirectory { get; set; }
+    public string? QueueName { get; set; } = "TestQueue";
+    public IModel? CurrentChannel { get; set; }
+    public string? ConfigurationQueueName {get;set; }
+    public string? HostName { get; set; }
     public string? HeartBeatQueueName { get; set; }
 }

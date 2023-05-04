@@ -1,107 +1,58 @@
 ﻿using RabbitMQ.Client.Events;
 using RabbitMQ.Client;
-using System.Text;
 using Microsoft.Extensions.Configuration;
-using System.Text.Json;
+using System.Threading.Channels;
+using System.Text;
 
 class ProcessingService
 {
-
-    private static IModel _connection;
-    private static SystemConfigurationModel _currentConfiguration;
-
     public static void Main(string[] args)
     {
-        
         IConfiguration config = new ConfigurationBuilder()
         .AddJsonFile("appsettings.json")
         .AddEnvironmentVariables()
         .Build();
         Console.WriteLine("Getting configuration");
-        _currentConfiguration = config.GetRequiredSection("Settings").Get<SystemConfigurationModel>();
-        Console.WriteLine("Creating configuration queue");
-        Task.Run(() => CreateConfigurationQueue());
+        var currentConfiguration = config.GetRequiredSection("Settings").Get<SystemConfigurationModel>();
         Console.WriteLine("Creating queue");
-        CreateQueue();
+        var connection = CreateQueue(currentConfiguration);
         Console.WriteLine("Subscribing to the queue");
-        SubscribeToRecieveMessages();
-        Console.WriteLine("Creating heartbeat queue");
-        Task.Run(() => CreateHeartBeatQueue());
+        SubscribeToRecieveMessages(connection, currentConfiguration);
         Console.WriteLine("Press any key to exit");
         Console.ReadKey();
     }
 
-    private static void CreateHeartBeatQueue()
+    private static IModel CreateQueue(SystemConfigurationModel? currentConfiguration)
     {
-        var channel = GetConnection();
-        channel.QueueDeclare(queue: _currentConfiguration.HeartBeatQueueName,
-                     durable: false,
-                     exclusive: true,
-                     autoDelete: true,
-                     arguments: null);
-        var consumer = new EventingBasicConsumer(GetConnection());
-        consumer.Received += OnHeartbeatMessageRecieved;
-        GetConnection().BasicConsume(queue: _currentConfiguration.HeartBeatQueueName,
-                             autoAck: true,
-                             consumer: consumer);
-    }
-
-    private static void OnHeartbeatMessageRecieved(object? sender, BasicDeliverEventArgs e)
-    {
-        var body = e.Body.ToArray();
-        var message = Encoding.UTF8.GetString(body);
-        Console.WriteLine(message);
-    }
-
-    private static IModel GetConnection()
-    {
-        if (_connection == null)
-        {
-            var factory = new ConnectionFactory { HostName = _currentConfiguration.HostName };
-            var connection = factory.CreateConnection();
-            return connection.CreateModel();
-        }
-        return _connection;
-    }
-
-    private static void CreateConfigurationQueue()
-    {
-        var channel = GetConnection();
-        var configurationBody = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(_currentConfiguration));
-        channel.ExchangeDeclare(exchange: _currentConfiguration.ConfigurationQueueName,
-                     type: ExchangeType.Fanout);
-        channel.BasicPublish(exchange: _currentConfiguration.ConfigurationQueueName,
-            routingKey: string.Empty,
-            basicProperties: null,
-            body: configurationBody);
-    }
-
-    private static void CreateQueue()
-    {
-        var channel = GetConnection();
-        channel.QueueDeclare(queue: _currentConfiguration.QueueName,
+        var factory = new ConnectionFactory { HostName = currentConfiguration.HostName };
+        var connection = factory.CreateConnection();
+        var channel = connection.CreateModel();
+        channel.QueueDeclare(queue: currentConfiguration.QueueName,
                              durable: false,
                              exclusive: false,
                              autoDelete: false,
                              arguments: null);
+        return channel;
     }
 
-    private static void SubscribeToRecieveMessages()
+    private static void SubscribeToRecieveMessages(IModel connection, SystemConfigurationModel config)
     {
-        var consumer = new EventingBasicConsumer(GetConnection());
+        var consumer = new EventingBasicConsumer(connection);
         consumer.Received += OnMessageRecieved;
-        GetConnection().BasicConsume(queue: _currentConfiguration.QueueName,
+        connection.BasicConsume(queue: config.QueueName,
                              autoAck: true,
                              consumer: consumer);
     }
 
     private static void OnMessageRecieved(object? sender, BasicDeliverEventArgs e)
     {
+        byte[] nameBytes = (byte[])e.BasicProperties.Headers["fileName"];
+        var name = Encoding.UTF8.GetString(nameBytes);
         var fileBytes = e.Body;
-        Console.WriteLine($" File received");
         var tempDirectory = Path.GetTempPath();
-        var tempFileName = Path.GetRandomFileName();
-        File.WriteAllBytes(Path.Combine(tempDirectory, tempFileName), fileBytes.ToArray());
+        Console.WriteLine($"The file with name {name} will be stored in {tempDirectory} directory");
+        File.WriteAllBytes(Path.Combine(tempDirectory, name), fileBytes.ToArray());
+        //TODO add extension or pass the file name on key header. Show the path to file
     }
 }
 
